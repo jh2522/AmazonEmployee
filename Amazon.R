@@ -11,7 +11,8 @@ library(embed)
 library(glmnet)
 library(lme4)
 library(kknn)
-
+library(discrim)
+library(naivebayes)
 sample <- "sampleSubmission.csv"
 test <- "test.csv"
 train <- "train.csv"
@@ -153,3 +154,59 @@ CV_results_pen <- forest_wf %>%
 CV_results_pen
 bestTune_pen <- CV_results_pen %>% 
   select_best(metric="roc_auc")
+
+final_wf_forest <- 
+  forest_wf %>% 
+  finalize_workflow(bestTune_forest) %>% 
+  fit(data=mycleandata)
+
+predict <- final_wf_forest %>% 
+  predict(new_data=test1, type="prob")
+
+kaggle_submission <- predict %>% 
+  bind_cols(., test1) %>% 
+  select(id, .pred_1) %>% 
+  rename(ACTION=.pred_1)
+vroom_write(x=kaggle_submission, file="./ForestLogistic12.csv", delim=",")
+
+#Bayes
+
+mycleandata <- train1 %>% 
+  mutate(ACTION=as.factor(ACTION))
+
+my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
+  step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
+  step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
+  step_normalize(all_numeric_predictors())
+
+nb_model <- naive_Bayes(Laplace=tune(), smoothness=tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("naivebayes")
+
+nb_wf <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(nb_model)
+
+tuning_grid_nb <- grid_regular(Laplace(), smoothness(), levels=10)
+
+folds_nb <- vfold_cv(mycleandata, v = 5, repeats=1)
+
+CV_results_nb <- nb_wf %>% 
+  tune_grid(resamples=folds_nb, grid=tuning_grid_nb, metrics=metric_set(roc_auc))
+
+bestTune_nb <- CV_results_nb %>% 
+  select_best(metric="roc_auc")
+
+final_wf_nb <- 
+  nb_wf %>% 
+  finalize_workflow(bestTune_nb) %>% 
+  fit(data=mycleandata)
+
+predict <- final_wf_nb %>% 
+  predict(new_data=test1, type="prob")
+
+kaggle_submission <- predict %>% 
+  bind_cols(., test1) %>% 
+  select(id, .pred_1) %>% 
+  rename(ACTION=.pred_1)
+vroom_write(x=kaggle_submission, file="./NBLogistic12.csv", delim=",")
