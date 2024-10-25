@@ -31,7 +31,7 @@ mycleandata <- train1 %>%
 my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
   step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
   step_other(all_nominal_predictors(), threshold = .001) %>%
-  step_dummy(all_nominal_predictors())
+  step_dummy(all_nominal_predictors()) 
 
 
 logRegModel <- logistic_reg() %>% 
@@ -51,7 +51,7 @@ kaggle_submission <- amazon_prediction %>%
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
 
-vroom_write(x=kaggle_submission, file="./Logistic12.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./Logistic13.csv", delim=",")
 
 #penalized logistic regression
 
@@ -63,9 +63,10 @@ my_recipe <- recipe(ACTION~., data=mycleandata) %>%
   #step_other(all_nominal_predictors(), threshold = .001) %>%
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
   #step_dummy(all_nominal_predictors()) %>% 
-  step_normalize(all_numeric_predictors())
-
-
+  step_normalize(all_numeric_predictors()) %>% 
+  step_pca(all_predictors(),threshold=.8)
+prepped <- prep(my_recipe)
+bake(prepped, new_data=mycleandata)
 my_mod_pen <- logistic_reg(mixture=tune(), penalty=tune()) %>% 
   set_engine("glmnet")
 
@@ -95,14 +96,15 @@ kaggle_submission <- predict %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./PenLogistic12.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./PenLogistic13.csv", delim=",")
 
 #KNN
 
 my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
   step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
-  step_normalize(all_numeric_predictors())
+  step_normalize(all_numeric_predictors()) %>% 
+  step_pca(all_predictors(),threshold=.8)
 knn_model <- nearest_neighbor(neighbors=50) %>% 
   set_mode("classification") %>% 
   set_engine("kknn")
@@ -123,7 +125,7 @@ kaggle_submission <- predict_knn %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./KNNLogistic12.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./KNNLogistic13.csv", delim=",")
 
 #Random Forest
 
@@ -133,7 +135,8 @@ mycleandata <- train1 %>%
 my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
   step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
-  step_normalize(all_numeric_predictors())
+  step_normalize(all_numeric_predictors()) %>% 
+  step_pca(all_predictors(),threshold=.8)
 
 forest_mod <- rand_forest(mtry = tune(),
                       min_n=tune(),
@@ -167,7 +170,7 @@ kaggle_submission <- predict %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./ForestLogistic12.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./ForestLogistic13.csv", delim=",")
 
 #Bayes
 
@@ -177,7 +180,8 @@ mycleandata <- train1 %>%
 my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
   step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
-  step_normalize(all_numeric_predictors())
+  step_normalize(all_numeric_predictors()) %>% 
+  step_pca(all_predictors(),threshold=.8)
 
 nb_model <- naive_Bayes(Laplace=tune(), smoothness=tune()) %>% 
   set_mode("classification") %>% 
@@ -187,7 +191,7 @@ nb_wf <- workflow() %>%
   add_recipe(my_recipe) %>% 
   add_model(nb_model)
 
-tuning_grid_nb <- grid_regular(Laplace(), smoothness(), levels=10)
+tuning_grid_nb <- grid_regular(Laplace(), smoothness(), levels=5)
 
 folds_nb <- vfold_cv(mycleandata, v = 5, repeats=1)
 
@@ -209,4 +213,4 @@ kaggle_submission <- predict %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./NBLogistic12.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./NBLogistic13.csv", delim=",")
