@@ -13,6 +13,11 @@ library(lme4)
 library(kknn)
 library(discrim)
 library(naivebayes)
+library(kernlab)
+library(themis)
+library(parsnip)
+library(bart)
+library(dbarts)
 sample <- "sampleSubmission.csv"
 test <- "test.csv"
 train <- "train.csv"
@@ -51,7 +56,7 @@ kaggle_submission <- amazon_prediction %>%
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
 
-vroom_write(x=kaggle_submission, file="./Logistic13.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./Logistic14.csv", delim=",")
 
 #penalized logistic regression
 
@@ -64,7 +69,9 @@ my_recipe <- recipe(ACTION~., data=mycleandata) %>%
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
   #step_dummy(all_nominal_predictors()) %>% 
   step_normalize(all_numeric_predictors()) %>% 
-  step_pca(all_predictors(),threshold=.8)
+  step_pca(all_predictors(),threshold=.8) %>% 
+  step_smote(all_outcomes(), neighbors = 5)
+
 prepped <- prep(my_recipe)
 bake(prepped, new_data=mycleandata)
 my_mod_pen <- logistic_reg(mixture=tune(), penalty=tune()) %>% 
@@ -96,15 +103,14 @@ kaggle_submission <- predict %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./PenLogistic13.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./PenLogistic14.csv", delim=",")
 
 #KNN
 
 my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
   step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  step_pca(all_predictors(),threshold=.8)
+  step_normalize(all_numeric_predictors()) 
 knn_model <- nearest_neighbor(neighbors=50) %>% 
   set_mode("classification") %>% 
   set_engine("kknn")
@@ -125,7 +131,7 @@ kaggle_submission <- predict_knn %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./KNNLogistic13.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./KNNLogistic14.csv", delim=",")
 
 #Random Forest
 
@@ -148,14 +154,14 @@ forest_wf <- workflow() %>%
   add_recipe(my_recipe) %>% 
   add_model(forest_mod)
 
-tuning_grid_forest <- grid_regular(mtry(range=c(1,9)), min_n(), levels=5)
+tuning_grid_forest <- grid_regular(mtry(range=c(1,5)), min_n(), levels=5)
 
 folds_forest <- vfold_cv(mycleandata, v = 5, repeats=1)
 
 CV_results_pen <- forest_wf %>% 
   tune_grid(resamples=folds_forest, grid=tuning_grid_forest, metrics=metric_set(roc_auc))
 CV_results_pen
-bestTune_pen <- CV_results_pen %>% 
+bestTune_forest <- CV_results_pen %>% 
   select_best(metric="roc_auc")
 
 final_wf_forest <- 
@@ -170,7 +176,7 @@ kaggle_submission <- predict %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./ForestLogistic13.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./ForestLogistic14.csv", delim=",")
 
 #Bayes
 
@@ -213,4 +219,73 @@ kaggle_submission <- predict %>%
   bind_cols(., test1) %>% 
   select(id, .pred_1) %>% 
   rename(ACTION=.pred_1)
-vroom_write(x=kaggle_submission, file="./NBLogistic13.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./NBLogistic14.csv", delim=",")
+
+#SVM
+
+mycleandata <- train1 %>% 
+  mutate(ACTION=as.factor(ACTION))
+
+my_recipe <- recipe(ACTION~., data=mycleandata) %>% 
+  step_mutate_at(all_numeric_predictors(), fn=factor) %>% 
+  step_lencode_mixed(all_nominal_predictors(), outcome=vars(ACTION)) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_pca(all_predictors(),threshold=.8)
+
+svmRadial <- svm_rbf(rbf_sigma=tune(), cost=tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("kernlab")
+
+rad_wf <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(svmRadial)
+
+tuning_grid_rad <- grid_regular(rbf_sigma(), cost(), levels=5)
+
+folds_rad <- vfold_cv(mycleandata, v = 5, repeats=1)
+
+CV_results_rad <- rad_wf %>% 
+  tune_grid(resamples=folds_rad, grid=tuning_grid_rad, metrics=metric_set(roc_auc))
+CV_results_rad
+bestTune_rad <- CV_results_rad %>% 
+  select_best(metric="roc_auc")
+bestTune_rad
+
+final_wf_rad <- 
+  rad_wf %>% 
+  finalize_workflow(bestTune_rad) %>% 
+  fit(data=mycleandata)
+
+predict <- final_wf_rad %>% 
+  predict(new_data=test1, type="prob")
+
+kaggle_submission <- predict %>% 
+  bind_cols(., test1) %>% 
+  select(id, .pred_1) %>% 
+  rename(ACTION=.pred_1)
+vroom_write(x=kaggle_submission, file="./RadLogistic14.csv", delim=",")
+
+#BART
+
+set.seed(69)
+my_mod_bar <- parsnip::bart(trees = 100,
+                            prior_outcome_range = 3
+)  %>% 
+  set_engine("dbarts") %>% 
+  set_mode("classification")
+
+preg_wf_bar <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(my_mod_bar)
+
+final_wf_bar <- preg_wf_bar %>% 
+  fit(data=mycleandata)
+
+predict <- final_wf_bar %>% 
+  predict(new_data=test1, type="prob")
+
+kaggle_submission <- predict %>% 
+  bind_cols(., test1) %>% 
+  select(id, .pred_1) %>% 
+  rename(ACTION=.pred_1)
+vroom_write(x=kaggle_submission, file="./BarLogistic12.csv", delim=",")
